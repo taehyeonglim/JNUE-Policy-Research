@@ -6,6 +6,7 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(ROOT))
 
 import streamlit as st
+import pandas as pd
 from src.data_loader import GRADUATE_SCHOOL_STATUS
 from src.analyzer import get_overview_metrics, get_timeline_data
 from src.charts import create_status_table_chart, create_timeline_chart
@@ -24,12 +25,14 @@ col3.metric("설치 비율", metrics["설치_비율"])
 st.divider()
 
 st.subheader("전체 현황 테이블")
+# 표시용 DataFrame (정수 표기, NA → "-")
+display_df = GRADUATE_SCHOOL_STATUS.copy()
+display_df["설치연도"] = display_df["설치연도"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
+display_df["박사전공수"] = display_df["박사전공수"].apply(lambda v: str(int(v)) if pd.notna(v) else "-")
+display_df["설치여부"] = display_df["교육전문대학원_설치"].map({True: "설치", False: "미설치"})
+display_cols = ["대학교", "소재지", "설치여부", "설치연도", "설치방식", "박사전공수"]
 st.dataframe(
-    GRADUATE_SCHOOL_STATUS.style.applymap(
-        lambda v: "background-color: #DBEAFE" if v is True
-        else ("background-color: #FEE2E2" if v is False else ""),
-        subset=["교육전문대학원_설치"],
-    ),
+    display_df[display_cols],
     use_container_width=True,
     hide_index=True,
 )

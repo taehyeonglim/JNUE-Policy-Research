@@ -157,9 +157,9 @@ GRADUATE_SCHOOL_STATUS = pd.DataFrame({
     "대학교": UNIVERSITIES,
     "소재지": ["인천/경기", "서울", "부산", "대구", "광주", "전북", "강원", "충북", "경남", "충남"],
     "교육전문대학원_설치": [True, True, False, True, True, False, False, True, True, True],
-    "설치연도": [2013, 2013, None, 2024, 2024, None, None, 2025, 2025, 2025],
-    "설치방식": ["전환", "전환", None, "병설", "병설", None, None, "병설", "병설", "병설"],
-    "박사전공수": [13, 14, None, 8, 8, None, None, 10, 8, 7],
+    "설치연도": pd.array([2013, 2013, pd.NA, 2024, 2024, pd.NA, pd.NA, 2025, 2025, 2025], dtype=pd.Int64Dtype()),
+    "설치방식": ["전환", "전환", "-", "병설", "병설", "-", "-", "병설", "병설", "병설"],
+    "박사전공수": pd.array([13, 14, pd.NA, 8, 8, pd.NA, pd.NA, 10, 8, 7], dtype=pd.Int64Dtype()),
 })
 
 MAJORS_DATA = pd.DataFrame({

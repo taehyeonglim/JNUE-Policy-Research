@@ -56,24 +56,33 @@ def create_status_table_chart(status_df: pd.DataFrame) -> go.Figure:
         for installed in status_df["교육전문대학원_설치"]
     ]
 
+    has_majors = "박사전공수" in status_df.columns
+    header_vals = ["대학교", "소재지", "설치여부", "설치연도", "설치방식"]
+    cell_vals = [
+        status_df["대학교"],
+        status_df["소재지"],
+        ["설치" if v else "미설치" for v in status_df["교육전문대학원_설치"]],
+        [str(int(v)) if pd.notna(v) else "-" for v in status_df["설치연도"]],
+        [v if pd.notna(v) and v != "-" else "-" for v in status_df["설치방식"]],
+    ]
+    if has_majors:
+        header_vals.append("박사전공수")
+        cell_vals.append([str(int(v)) if pd.notna(v) else "-" for v in status_df["박사전공수"]])
+
+    num_cols = len(header_vals)
+
     fig = go.Figure(data=[go.Table(
         header=dict(
-            values=["대학교", "소재지", "설치여부", "설치연도", "설치방식"],
+            values=header_vals,
             fill_color="#1E3A5F",
             font=dict(color="white", size=13),
             align="center",
         ),
         cells=dict(
-            values=[
-                status_df["대학교"],
-                status_df["소재지"],
-                ["설치" if v else "미설치" for v in status_df["교육전문대학원_설치"]],
-                [int(v) if pd.notna(v) else "-" for v in status_df["설치연도"]],
-                [v if pd.notna(v) else "-" for v in status_df["설치방식"]],
-            ],
+            values=cell_vals,
             fill_color=[
                 ["#E8F4FD" if c == COLOR_INSTALLED else "#FDE8E8" for c in colors]
-            ] * 5,
+            ] * num_cols,
             font=dict(size=12),
             align="center",
             height=30,
