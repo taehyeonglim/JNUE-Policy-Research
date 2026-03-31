@@ -3,7 +3,6 @@
 import pathlib
 import glob
 import re
-import numpy as np
 import pandas as pd
 
 DATA_DIR = pathlib.Path(__file__).resolve().parent.parent / "data"
@@ -394,7 +393,7 @@ def load_doctoral_enrollment() -> pd.DataFrame:
     return result
 
 
-def load_counseling_special_10yr() -> dict[str, pd.DataFrame]:
+def load_counseling_special_10yr() -> dict:
     """전주교대 교육대학원 상담/특수 전공 최근 10년 현황을 로드한다.
 
     Returns: {"입학": DataFrame, "졸업": DataFrame}
@@ -458,7 +457,7 @@ def get_doctoral_enrollment() -> pd.DataFrame:
     return _doctoral_enrollment_cache
 
 
-def get_counseling_special_10yr() -> dict[str, pd.DataFrame]:
+def get_counseling_special_10yr() -> dict:
     global _counseling_cache
     if _counseling_cache is None:
         _counseling_cache = load_counseling_special_10yr()
