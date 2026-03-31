@@ -30,6 +30,14 @@ not_installed = total - installed
 pct = installed / total * 100
 미설치_list = status.loc[~status["교육전문대학원_설치"], "대학교"].tolist()
 
+# 공통 변수 초기화 (조건부 블록 밖에서 사용되므로)
+전국_평균 = 0.0
+전주_변화 = 0.0
+설치_avg = 0.0
+미설치_avg = 0.0
+jnue = pd.DataFrame()
+전문대학원 = pd.DataFrame()
+
 # ===========================================================================
 # 1. 전국 교육대학원 위기와 교육전문대학원의 대응
 # ===========================================================================
@@ -72,7 +80,8 @@ if not summary.empty:
         )
         st.plotly_chart(fig_decline, use_container_width=True)
 
-        전주_변화 = 변화율_df[변화율_df["대학교"] == "전주교대"]["변화율"].values[0]
+        전주_row = 변화율_df[변화율_df["대학교"] == "전주교대"]["변화율"]
+        전주_변화 = 전주_row.values[0] if len(전주_row) > 0 else 0.0
         전국_평균 = 변화율_df["변화율"].mean()
 
         st.warning(f"""
@@ -189,28 +198,29 @@ if not summary.empty:
         fig_jnue.update_layout(title="전주교대 교육대학원 추이", height=400)
         st.plotly_chart(fig_jnue, use_container_width=True)
 
-        avg_경쟁률 = jnue_comp["경쟁률"].mean()
-
         # --- 전주교대 양성과정(상담/특수) 10년 추이 ---
-        counseling_data = get_counseling_special_10yr()
-        if not counseling_data["입학"].empty:
-            st.markdown("#### 전주교대 양성과정(상담/특수) 10년 입학 추이")
-            adm = counseling_data["입학"]
-            year_cols = [c for c in adm.columns if isinstance(c, int)]
-            fig_counsel = go.Figure()
-            for _, row in adm.iterrows():
-                vals = [row[yr] for yr in year_cols]
-                fig_counsel.add_trace(go.Scatter(
-                    x=year_cols, y=vals,
-                    mode="lines+markers", name=row["전공명"],
-                    connectgaps=False,
-                ))
-            fig_counsel.update_layout(
-                title="전주교대 양성과정 전공별 입학 인원 (2016~2026)",
-                xaxis_title="연도", yaxis_title="입학 인원(명)", height=380,
-            )
-            st.plotly_chart(fig_counsel, use_container_width=True)
-            st.caption("※ 초등교육상담→학교상담(2022~ 명칭변경), 초등특수교육은 2020년 이후 입학자 0명")
+        try:
+            counseling_data = get_counseling_special_10yr()
+            if not counseling_data["입학"].empty:
+                st.markdown("#### 전주교대 양성과정(상담/특수) 10년 입학 추이")
+                adm = counseling_data["입학"]
+                year_cols = [c for c in adm.columns if isinstance(c, int)]
+                fig_counsel = go.Figure()
+                for _, row in adm.iterrows():
+                    vals = [row[yr] for yr in year_cols]
+                    fig_counsel.add_trace(go.Scatter(
+                        x=year_cols, y=vals,
+                        mode="lines+markers", name=row["전공명"],
+                        connectgaps=False,
+                    ))
+                fig_counsel.update_layout(
+                    title="전주교대 양성과정 전공별 입학 인원 (2016~2026)",
+                    xaxis_title="연도", yaxis_title="입학 인원(명)", height=380,
+                )
+                st.plotly_chart(fig_counsel, use_container_width=True)
+                st.caption("※ 초등교육상담→학교상담(2022~ 명칭변경), 초등특수교육은 2020년 이후 입학자 0명")
+        except Exception:
+            pass  # 데이터 로딩 실패 시 건너뜀
 
         st.markdown(f"""
         #### 원인 진단
@@ -220,7 +230,7 @@ if not summary.empty:
         이는 전주교대만의 문제가 아닌 **전국 교대 공통 현상**(전국 평균 {전국_평균:+.1f}% 감소)입니다.
 
         반면 박사학위는 **승진, 전문성 심화, 연구 역량 인증**에서 석사와 질적으로 다른 동기를 제공하며,
-        신설 대학의 높은 경쟁률(대구교대 3.30:1)이 이를 실증합니다.
+        신설 대학의 높은 충원율(공주교대 100%)이 이를 실증합니다.
 
         따라서 교육전문대학원 설치는 기존 과정의 실패에 대한 반복이 아니라,
         **석사과정 수요 감소의 구조적 원인에 대응하는 체제 전환**입니다.
@@ -246,67 +256,70 @@ if not summary.empty:
         st.dataframe(신설_display.sort_values(["연도", "대학교"]), use_container_width=True, hide_index=True)
 
 # --- 4-B: 박사과정 전공별 신입생 충원 현황 (대학본부 데이터) ---
-doctoral = get_doctoral_enrollment()
-if not doctoral.empty:
-    st.subheader("4-1. 박사과정 전공별 신입생 충원 현황")
-    st.caption("출처: 대학본부 제공 — 교육전문대학원 박사과정 신입생 충원 현황 ('24~'26학년도)")
+try:
+    doctoral = get_doctoral_enrollment()
+    if not doctoral.empty:
+        st.subheader("4-1. 박사과정 전공별 신입생 충원 현황")
+        st.caption("출처: 대학본부 제공 — 교육전문대학원 박사과정 신입생 충원 현황 ('24~'26학년도)")
 
-    # 학교별 요약
-    school_summary = doctoral.groupby("대학교_약칭").agg(
-        양성정원=("양성정원", "first"),
-        전공수=("전공명", "count"),
-        충원_25=("충원_25학년도", "sum"),
-        충원_26=("충원_26학년도", "sum"),
-        충원누계=("충원누계", "sum"),
-    ).reset_index()
-    school_summary["충원율_25"] = (school_summary["충원_25"] / school_summary["양성정원"] * 100).round(1)
-    school_summary["충원율_26"] = (school_summary["충원_26"] / school_summary["양성정원"] * 100).round(1)
-    school_summary.columns = ["대학교", "양성정원", "전공수", "'25 충원", "'26 충원", "충원누계", "'25 충원율(%)", "'26 충원율(%)"]
+        # 학교별 요약
+        school_summary = doctoral.groupby("대학교_약칭").agg(
+            양성정원=("양성정원", "first"),
+            전공수=("전공명", "count"),
+            충원_25=("충원_25학년도", "sum"),
+            충원_26=("충원_26학년도", "sum"),
+            충원누계=("충원누계", "sum"),
+        ).reset_index()
+        school_summary["충원율_25"] = (school_summary["충원_25"] / school_summary["양성정원"] * 100).round(1)
+        school_summary["충원율_26"] = (school_summary["충원_26"] / school_summary["양성정원"] * 100).round(1)
+        school_summary.columns = ["대학교", "양성정원", "전공수", "'25 충원", "'26 충원", "충원누계", "'25 충원율(%)", "'26 충원율(%)"]
 
-    st.dataframe(school_summary, use_container_width=True, hide_index=True)
+        st.dataframe(school_summary, use_container_width=True, hide_index=True)
 
-    # 학교별 충원율 시각화
-    fig_enroll = go.Figure()
-    fig_enroll.add_trace(go.Bar(
-        x=school_summary["대학교"], y=school_summary["'25 충원율(%)"],
-        name="'25학년도", marker_color="#2563EB", text=school_summary["'25 충원율(%)"].apply(lambda x: f"{x}%"),
-        textposition="outside",
-    ))
-    fig_enroll.add_trace(go.Bar(
-        x=school_summary["대학교"], y=school_summary["'26 충원율(%)"],
-        name="'26학년도", marker_color="#F59E0B", text=school_summary["'26 충원율(%)"].apply(lambda x: f"{x}%"),
-        textposition="outside",
-    ))
-    fig_enroll.add_hline(y=100, line_dash="dash", line_color="#6B7280", annotation_text="정원 100%")
-    fig_enroll.update_layout(
-        title="교육전문대학원 박사과정 충원율 비교", barmode="group",
-        yaxis_title="충원율 (%)", height=420,
-    )
-    st.plotly_chart(fig_enroll, use_container_width=True)
+        # 학교별 충원율 시각화
+        fig_enroll = go.Figure()
+        fig_enroll.add_trace(go.Bar(
+            x=school_summary["대학교"], y=school_summary["'25 충원율(%)"],
+            name="'25학년도", marker_color="#2563EB", text=school_summary["'25 충원율(%)"].apply(lambda x: f"{x}%"),
+            textposition="outside",
+        ))
+        fig_enroll.add_trace(go.Bar(
+            x=school_summary["대학교"], y=school_summary["'26 충원율(%)"],
+            name="'26학년도", marker_color="#F59E0B", text=school_summary["'26 충원율(%)"].apply(lambda x: f"{x}%"),
+            textposition="outside",
+        ))
+        fig_enroll.add_hline(y=100, line_dash="dash", line_color="#6B7280", annotation_text="정원 100%")
+        fig_enroll.update_layout(
+            title="교육전문대학원 박사과정 충원율 비교", barmode="group",
+            yaxis_title="충원율 (%)", height=420,
+        )
+        st.plotly_chart(fig_enroll, use_container_width=True)
 
-    # 전공별 상세 (확장 가능)
-    with st.expander("전공별 상세 충원 현황 보기"):
-        detail = doctoral[["대학교_약칭", "전공명", "충원_25학년도", "충원_26학년도", "충원누계"]].copy()
-        detail.columns = ["대학교", "전공명", "'25학년도", "'26학년도", "누계"]
-        st.dataframe(detail, use_container_width=True, hide_index=True)
+        # 전공별 상세 (확장 가능)
+        with st.expander("전공별 상세 충원 현황 보기"):
+            detail = doctoral[["대학교_약칭", "전공명", "충원_25학년도", "충원_26학년도", "충원누계"]].copy()
+            detail.columns = ["대학교", "전공명", "'25학년도", "'26학년도", "누계"]
+            st.dataframe(detail, use_container_width=True, hide_index=True)
 
-    # 인기 전공 TOP 10
-    top_majors = doctoral.nlargest(10, "충원누계")[["대학교_약칭", "전공명", "충원누계"]].copy()
-    top_majors.columns = ["대학교", "전공명", "충원누계"]
+        # 인기 전공 TOP 10
+        top_majors = doctoral.nlargest(10, "충원누계")[["대학교_약칭", "전공명", "충원누계"]].copy()
+        top_majors.columns = ["대학교", "전공명", "충원누계"]
 
-    fig_top = px.bar(
-        top_majors, x="충원누계", y="전공명", color="대학교",
-        orientation="h", title="박사과정 인기 전공 TOP 10 (충원 누계 기준)",
-        text="충원누계",
-    )
-    fig_top.update_layout(height=400, yaxis=dict(autorange="reversed"))
-    st.plotly_chart(fig_top, use_container_width=True)
+        fig_top = px.bar(
+            top_majors, x="충원누계", y="전공명", color="대학교",
+            orientation="h", title="박사과정 인기 전공 TOP 10 (충원 누계 기준)",
+            text="충원누계",
+        )
+        fig_top.update_layout(height=400, yaxis=dict(autorange="reversed"))
+        st.plotly_chart(fig_top, use_container_width=True)
 
-    st.success(f"""
-    **공주교대는 2년 연속 100% 충원**, 광주교대·대구교대도 높은 충원율을 기록.
-    박사과정에 대한 **현직 교사의 실제 수요가 충분함**을 실증합니다.
-    특히 상담·심리, AI교육, 교육행정 분야의 수요가 두드러집니다.
-    """)
+        st.success("""
+        **공주교대는 2년 연속 100% 충원**, 광주교대·대구교대도 높은 충원율을 기록.
+        박사과정에 대한 **현직 교사의 실제 수요가 충분함**을 실증합니다.
+        특히 상담·심리, AI교육, 교육행정 분야의 수요가 두드러집니다.
+        """)
+except Exception:
+    pass  # 데이터 로딩 실패 시 건너뜀
 
 st.markdown("""
 #### 해석 시 유의점
@@ -325,7 +338,7 @@ st.divider()
 # ===========================================================================
 st.header("5. 교육전문대학원의 장기 운영 안정성")
 
-if not summary.empty:
+if not summary.empty and not 전문대학원.empty:
     전환 = 전문대학원[전문대학원["대학교"].isin(["경인교대", "서울교대"])]
     latest_전환 = 전환[전환["연도"] == 전환["연도"].max()]
 
@@ -451,4 +464,4 @@ st.markdown("""
 """)
 
 st.divider()
-st.caption("※ 본 분석은 KESS 교육통계 데이터베이스(kess.kedi.re.kr) 데이터를 기반으로 자동 생성되었습니다. 데이터 갱신 시 내용이 자동으로 업데이트됩니다.")
+st.caption("※ 본 분석은 KESS 교육통계 데이터베이스(kess.kedi.re.kr) 및 대학본부 제공 데이터를 기반으로 자동 생성되었습니다. 데이터 갱신 시 내용이 자동으로 업데이트됩니다.")
