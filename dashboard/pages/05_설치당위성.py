@@ -9,11 +9,23 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
-from src.data_loader import (
-    GRADUATE_SCHOOL_STATUS, MAJORS_DATA, get_sangbangi,
-    get_doctoral_enrollment, get_counseling_special_10yr, get_national_grad_status,
-)
+from src.data_loader import GRADUATE_SCHOOL_STATUS, MAJORS_DATA, get_sangbangi
 from src.analyzer import get_student_summary, get_competition_rates
+
+# 새 데이터 로더 — 실패 시 빈 데이터 반환
+def _safe_doctoral():
+    try:
+        from src.data_loader import get_doctoral_enrollment
+        return get_doctoral_enrollment()
+    except Exception:
+        return pd.DataFrame()
+
+def _safe_counseling():
+    try:
+        from src.data_loader import get_counseling_special_10yr
+        return get_counseling_special_10yr()
+    except Exception:
+        return {"입학": pd.DataFrame(), "졸업": pd.DataFrame()}
 
 st.set_page_config(page_title="설치 당위성", page_icon="📋", layout="wide")
 st.title("📋 전주교대 교육전문대학원 설치 당위성")
@@ -200,7 +212,7 @@ if not summary.empty:
 
         # --- 전주교대 양성과정(상담/특수) 10년 추이 ---
         try:
-            counseling_data = get_counseling_special_10yr()
+            counseling_data = _safe_counseling()
             if not counseling_data["입학"].empty:
                 st.markdown("#### 전주교대 양성과정(상담/특수) 10년 입학 추이")
                 adm = counseling_data["입학"]
@@ -257,7 +269,7 @@ if not summary.empty:
 
 # --- 4-B: 박사과정 전공별 신입생 충원 현황 (대학본부 데이터) ---
 try:
-    doctoral = get_doctoral_enrollment()
+    doctoral = _safe_doctoral()
     if not doctoral.empty:
         st.subheader("4-1. 박사과정 전공별 신입생 충원 현황")
         st.caption("출처: 대학본부 제공 — 교육전문대학원 박사과정 신입생 충원 현황 ('24~'26학년도)")
