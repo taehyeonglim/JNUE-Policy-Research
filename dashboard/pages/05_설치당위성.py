@@ -9,7 +9,10 @@ import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
 import pandas as pd
-from src.data_loader import GRADUATE_SCHOOL_STATUS, MAJORS_DATA, get_sangbangi
+from src.data_loader import (
+    GRADUATE_SCHOOL_STATUS, MAJORS_DATA, get_sangbangi,
+    get_doctoral_enrollment, get_counseling_special_10yr, get_national_grad_status,
+)
 from src.analyzer import get_student_summary, get_competition_rates
 
 st.set_page_config(page_title="설치 당위성", page_icon="📋", layout="wide")
@@ -188,6 +191,27 @@ if not summary.empty:
 
         avg_경쟁률 = jnue_comp["경쟁률"].mean()
 
+        # --- 전주교대 양성과정(상담/특수) 10년 추이 ---
+        counseling_data = get_counseling_special_10yr()
+        if not counseling_data["입학"].empty:
+            st.markdown("#### 전주교대 양성과정(상담/특수) 10년 입학 추이")
+            adm = counseling_data["입학"]
+            year_cols = [c for c in adm.columns if isinstance(c, int)]
+            fig_counsel = go.Figure()
+            for _, row in adm.iterrows():
+                vals = [row[yr] for yr in year_cols]
+                fig_counsel.add_trace(go.Scatter(
+                    x=year_cols, y=vals,
+                    mode="lines+markers", name=row["전공명"],
+                    connectgaps=False,
+                ))
+            fig_counsel.update_layout(
+                title="전주교대 양성과정 전공별 입학 인원 (2016~2026)",
+                xaxis_title="연도", yaxis_title="입학 인원(명)", height=380,
+            )
+            st.plotly_chart(fig_counsel, use_container_width=True)
+            st.caption("※ 초등교육상담→학교상담(2022~ 명칭변경), 초등특수교육은 2020년 이후 입학자 0명")
+
         st.markdown(f"""
         #### 원인 진단
 
@@ -209,6 +233,7 @@ st.divider()
 # ===========================================================================
 st.header("4. 교육전문대학원 신설 대학의 수요 검증")
 
+# --- 4-A: KESS 기반 신설대학 총괄 ---
 if not summary.empty:
     전문대학원 = summary[summary["대학원유형"] == "교육전문대학원"].copy()
     신설 = 전문대학원[~전문대학원["대학교"].isin(["경인교대", "서울교대"])]
@@ -220,17 +245,78 @@ if not summary.empty:
         신설_display[["연도", "입학정원", "지원자", "입학자", "재학생"]] = 신설_display[["연도", "입학정원", "지원자", "입학자", "재학생"]].astype(int)
         st.dataframe(신설_display.sort_values(["연도", "대학교"]), use_container_width=True, hide_index=True)
 
-        st.markdown("""
-        #### 해석 시 유의점
+# --- 4-B: 박사과정 전공별 신입생 충원 현황 (대학본부 데이터) ---
+doctoral = get_doctoral_enrollment()
+if not doctoral.empty:
+    st.subheader("4-1. 박사과정 전공별 신입생 충원 현황")
+    st.caption("출처: 대학본부 제공 — 교육전문대학원 박사과정 신입생 충원 현황 ('24~'26학년도)")
 
-        신설 대학별 경쟁률은 지역 권역, 교원 규모, 전공 구성에 따라 차이가 있습니다.
-        전주교대에 직접 적용하기보다는, **박사과정에 대한 전국적 수요 존재**의 근거로 참고해야 합니다.
+    # 학교별 요약
+    school_summary = doctoral.groupby("대학교_약칭").agg(
+        양성정원=("양성정원", "first"),
+        전공수=("전공명", "count"),
+        충원_25=("충원_25학년도", "sum"),
+        충원_26=("충원_26학년도", "sum"),
+        충원누계=("충원누계", "sum"),
+    ).reset_index()
+    school_summary["충원율_25"] = (school_summary["충원_25"] / school_summary["양성정원"] * 100).round(1)
+    school_summary["충원율_26"] = (school_summary["충원_26"] / school_summary["양성정원"] * 100).round(1)
+    school_summary.columns = ["대학교", "양성정원", "전공수", "'25 충원", "'26 충원", "충원누계", "'25 충원율(%)", "'26 충원율(%)"]
 
-        전주교대의 실제 수요 규모를 확인하기 위해서는
-        **전북 지역 현직 교사 대상 수요조사**가 필요합니다. (→ 향후 보강 필요 항목 참조)
-        """)
-    else:
-        st.info("신설 교육전문대학원 데이터가 아직 없습니다.")
+    st.dataframe(school_summary, use_container_width=True, hide_index=True)
+
+    # 학교별 충원율 시각화
+    fig_enroll = go.Figure()
+    fig_enroll.add_trace(go.Bar(
+        x=school_summary["대학교"], y=school_summary["'25 충원율(%)"],
+        name="'25학년도", marker_color="#2563EB", text=school_summary["'25 충원율(%)"].apply(lambda x: f"{x}%"),
+        textposition="outside",
+    ))
+    fig_enroll.add_trace(go.Bar(
+        x=school_summary["대학교"], y=school_summary["'26 충원율(%)"],
+        name="'26학년도", marker_color="#F59E0B", text=school_summary["'26 충원율(%)"].apply(lambda x: f"{x}%"),
+        textposition="outside",
+    ))
+    fig_enroll.add_hline(y=100, line_dash="dash", line_color="#6B7280", annotation_text="정원 100%")
+    fig_enroll.update_layout(
+        title="교육전문대학원 박사과정 충원율 비교", barmode="group",
+        yaxis_title="충원율 (%)", height=420,
+    )
+    st.plotly_chart(fig_enroll, use_container_width=True)
+
+    # 전공별 상세 (확장 가능)
+    with st.expander("전공별 상세 충원 현황 보기"):
+        detail = doctoral[["대학교_약칭", "전공명", "충원_25학년도", "충원_26학년도", "충원누계"]].copy()
+        detail.columns = ["대학교", "전공명", "'25학년도", "'26학년도", "누계"]
+        st.dataframe(detail, use_container_width=True, hide_index=True)
+
+    # 인기 전공 TOP 10
+    top_majors = doctoral.nlargest(10, "충원누계")[["대학교_약칭", "전공명", "충원누계"]].copy()
+    top_majors.columns = ["대학교", "전공명", "충원누계"]
+
+    fig_top = px.bar(
+        top_majors, x="충원누계", y="전공명", color="대학교",
+        orientation="h", title="박사과정 인기 전공 TOP 10 (충원 누계 기준)",
+        text="충원누계",
+    )
+    fig_top.update_layout(height=400, yaxis=dict(autorange="reversed"))
+    st.plotly_chart(fig_top, use_container_width=True)
+
+    st.success(f"""
+    **공주교대는 2년 연속 100% 충원**, 광주교대·대구교대도 높은 충원율을 기록.
+    박사과정에 대한 **현직 교사의 실제 수요가 충분함**을 실증합니다.
+    특히 상담·심리, AI교육, 교육행정 분야의 수요가 두드러집니다.
+    """)
+
+st.markdown("""
+#### 해석 시 유의점
+
+신설 대학별 충원율은 지역 권역, 교원 규모, 전공 구성에 따라 차이가 있습니다.
+전주교대에 직접 적용하기보다는, **박사과정에 대한 전국적 수요 존재**의 근거로 참고해야 합니다.
+
+전주교대의 실제 수요 규모를 확인하기 위해서는
+**전북 지역 현직 교사 대상 수요조사**가 필요합니다. (→ 향후 보강 필요 항목 참조)
+""")
 
 st.divider()
 
@@ -360,6 +446,8 @@ st.markdown("""
 | **재정 자립 계획** | 예상 등록금 수입, 운영비용, 손익분기점 | 미산출 |
 | **졸업 후 성과 모델** | 박사학위 취득 교사의 경력 경로 분석 | 미분석 |
 | **전북 교사 타 지역 유출 데이터** | 광주/충남 교육전문대학원 전북 출신 재학생 수 | 미확인 |
+| ~~**타 교대 박사과정 충원 현황**~~ | ~~신설 5개 교대 전공별 충원 데이터~~ | ✅ **반영 완료** |
+| ~~**전주교대 양성과정 추이**~~ | ~~상담/특수교육 전공 10년 입학·졸업 추이~~ | ✅ **반영 완료** |
 """)
 
 st.divider()

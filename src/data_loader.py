@@ -3,6 +3,7 @@
 import pathlib
 import glob
 import re
+import numpy as np
 import pandas as pd
 
 DATA_DIR = pathlib.Path(__file__).resolve().parent.parent / "data"
@@ -213,6 +214,22 @@ MAJORS_DATA = pd.DataFrame({
         "윤리·인성교육", "초등국어교육", "수학교육", "융합과학과영재교육", "체육교육",
         "음악교육", "교육학", "심리·상담·특수교육", "어린이영어융합교육", "유아및아동교육",
     ],
+    "양성정원": [
+        # 경인교대
+        *([None] * 13),
+        # 서울교대
+        *([None] * 14),
+        # 광주교대 — 32명
+        *([32] * 8),
+        # 대구교대 — 30→42명
+        *([30] * 8),
+        # 진주교대 — 30명
+        *([30] * 8),
+        # 공주교대 — 30명
+        *([30] * 7),
+        # 청주교대 — 33명
+        *([33] * 10),
+    ],
     "분야": [
         # 경인교대
         "교육학", "교육학", "교과교육", "교과교육", "교과교육",
@@ -239,3 +256,210 @@ MAJORS_DATA = pd.DataFrame({
         "교과교육", "교육학", "교육학", "융합교육", "교육학",
     ],
 })
+
+
+# ---------------------------------------------------------------------------
+# 신규 데이터 로딩: 대학본부 제공 자료
+# ---------------------------------------------------------------------------
+
+_GRAD_CSV = DATA_DIR / "전국교대 대학원 현황" / "전국대학원 최근 5년간 현황.csv"
+_JNUE_CSV = DATA_DIR / "전국교대 대학원 현황" / "전주교대 교육대학원(양성과정, 재교육과정 포함) 최근 5년간 현황.csv"
+_ENROLLMENT_XLSX = DATA_DIR / "전국교대 대학원 현황" / "전국 교대 교육전문대학원 신입생 충원 현황.xlsx"
+_COUNSELING_XLSX = DATA_DIR / "전국교대 대학원 현황" / "전주교대 교육대학원 상담 및 특수 전공(양성과정) 최근 10년 현황.xlsx"
+
+
+def load_national_grad_status() -> pd.DataFrame:
+    """전국교대 대학원 최근 5년간 현황 CSV를 로드한다."""
+    if not _GRAD_CSV.exists():
+        return pd.DataFrame()
+    df = pd.read_csv(_GRAD_CSV, encoding="utf-8-sig")
+    return df
+
+
+def load_doctoral_enrollment() -> pd.DataFrame:
+    """전국 교대 교육전문대학원 박사과정 신입생 충원 현황을 파싱한다.
+
+    복잡한 merged header 구조를 수동 파싱하여 학교별/전공별 충원 데이터를 반환.
+    """
+    if not _ENROLLMENT_XLSX.exists():
+        return pd.DataFrame()
+
+    df = pd.read_excel(_ENROLLMENT_XLSX, header=None, engine="openpyxl")
+
+    records = []
+    current_school = None
+    current_capacity = None
+
+    def _parse_major_row(row_data, school, capacity):
+        """전공 데이터 행에서 충원 수치를 추출한다."""
+        col2 = str(row_data.iloc[2]) if pd.notna(row_data.iloc[2]) else ""
+        if not col2 or col2 in ("소계", "nan") or "※" in col2:
+            return None
+
+        # 각 학년도별 개별 충원 수치 합산 (수식 대신 직접 계산)
+        # '24학년도: cols 3-7 (전기, 전기추가, 후기, 후기추가, 합계)
+        # '25학년도: cols 8-12
+        # '26학년도: cols 13-17
+        # 충원누계: col 18 (엑셀 수식이라 0일 수 있음)
+
+        def _sum_cols(row_data, start, end):
+            """start~end-1 컬럼의 합계 (합계열 제외하고 개별값 합산)."""
+            total = 0
+            for i in range(start, end):
+                v = pd.to_numeric(row_data.iloc[i], errors="coerce")
+                if pd.notna(v):
+                    total += int(v)
+            return total
+
+        # 합계열(index 7, 12, 17)을 먼저 시도, 0이면 개별 합산
+        충원_24 = pd.to_numeric(row_data.iloc[7], errors="coerce")
+        if pd.isna(충원_24) or 충원_24 == 0:
+            충원_24 = _sum_cols(row_data, 3, 7)
+        else:
+            충원_24 = int(충원_24)
+
+        충원_25 = pd.to_numeric(row_data.iloc[12], errors="coerce")
+        if pd.isna(충원_25) or 충원_25 == 0:
+            충원_25 = _sum_cols(row_data, 8, 12)
+        else:
+            충원_25 = int(충원_25)
+
+        충원_26 = pd.to_numeric(row_data.iloc[17], errors="coerce")
+        if pd.isna(충원_26) or 충원_26 == 0:
+            충원_26 = _sum_cols(row_data, 13, 17)
+        else:
+            충원_26 = int(충원_26)
+
+        누계 = 충원_24 + 충원_25 + 충원_26
+
+        return {
+            "대학교": school,
+            "양성정원": capacity,
+            "전공명": col2,
+            "충원_24학년도": 충원_24,
+            "충원_25학년도": 충원_25,
+            "충원_26학년도": 충원_26,
+            "충원누계": 누계,
+        }
+
+    for idx, row in df.iterrows():
+        if idx < 5:
+            continue  # 헤더 스킵
+
+        col0 = str(row.iloc[0]) if pd.notna(row.iloc[0]) else ""
+        col1 = row.iloc[1]
+        col2 = str(row.iloc[2]) if pd.notna(row.iloc[2]) else ""
+
+        # 학교명 감지
+        if "교육대학교" in col0 or "교육전문대학원" in col0:
+            current_school = col0.replace("\n", " ").strip()
+            if pd.notna(col1):
+                try:
+                    current_capacity = int(col1)
+                except (ValueError, TypeError):
+                    capacity_str = str(col1)
+                    nums = re.findall(r"\d+", capacity_str)
+                    current_capacity = int(nums[0]) if nums else None
+
+            # 학교명 행에도 전공 데이터가 있을 수 있음
+            if col2 and col2 not in ("소계", "nan", ""):
+                rec = _parse_major_row(row, current_school, current_capacity)
+                if rec:
+                    records.append(rec)
+            continue
+
+        # 소계 또는 빈 행 스킵
+        if col2 in ("소계", "", "nan") or "※" in col2 or col2.startswith("※"):
+            continue
+
+        # 전공 데이터 행
+        if current_school and col2 and col2 not in ("소계", "nan"):
+            rec = _parse_major_row(row, current_school, current_capacity)
+            if rec:
+                records.append(rec)
+
+    result = pd.DataFrame(records)
+
+    # 대학교 약칭 변환
+    if not result.empty:
+        name_map = {
+            "청주교육대학교 교육전문대학원": "청주교대",
+            "진주교육대학교 교육전문대학원": "진주교대",
+            "대구교육대학교 교육전문대학원": "대구교대",
+            "광주교육대학교 교육전문대학원": "광주교대",
+            "공주교육대학교 교육전문대학원": "공주교대",
+        }
+        result["대학교_약칭"] = result["대학교"].map(name_map).fillna(result["대학교"])
+
+    return result
+
+
+def load_counseling_special_10yr() -> dict[str, pd.DataFrame]:
+    """전주교대 교육대학원 상담/특수 전공 최근 10년 현황을 로드한다.
+
+    Returns: {"입학": DataFrame, "졸업": DataFrame}
+    """
+    if not _COUNSELING_XLSX.exists():
+        return {"입학": pd.DataFrame(), "졸업": pd.DataFrame()}
+
+    df = pd.read_excel(_COUNSELING_XLSX, header=None, engine="openpyxl")
+
+    # 입학 인원 (rows 5-7, cols 5-15 → 2016-2026)
+    years_admission = list(range(2016, 2027))
+    admission_rows = []
+    for i in [5, 6, 7]:
+        if i >= len(df):
+            continue
+        major = str(df.iloc[i, 3]) if pd.notna(df.iloc[i, 3]) else ""
+        cert = str(df.iloc[i, 4]) if pd.notna(df.iloc[i, 4]) else ""
+        values = []
+        for j, yr in enumerate(years_admission):
+            val = pd.to_numeric(df.iloc[i, 5 + j], errors="coerce")
+            values.append(int(val) if pd.notna(val) else None)
+        admission_rows.append({"전공명": major, "자격종별": cert, **dict(zip(years_admission, values))})
+
+    # 졸업 인원 (rows 13-15, cols 5-14 → 2017-2026)
+    years_graduation = list(range(2017, 2027))
+    graduation_rows = []
+    for i in [13, 14, 15]:
+        if i >= len(df):
+            continue
+        major = str(df.iloc[i, 3]) if pd.notna(df.iloc[i, 3]) else ""
+        cert = str(df.iloc[i, 4]) if pd.notna(df.iloc[i, 4]) else ""
+        values = []
+        for j, yr in enumerate(years_graduation):
+            val = pd.to_numeric(df.iloc[i, 5 + j], errors="coerce")
+            values.append(int(val) if pd.notna(val) else None)
+        graduation_rows.append({"전공명": major, "자격종별": cert, **dict(zip(years_graduation, values))})
+
+    return {
+        "입학": pd.DataFrame(admission_rows),
+        "졸업": pd.DataFrame(graduation_rows),
+    }
+
+
+# 캐시
+_national_grad_cache = None
+_doctoral_enrollment_cache = None
+_counseling_cache = None
+
+
+def get_national_grad_status() -> pd.DataFrame:
+    global _national_grad_cache
+    if _national_grad_cache is None:
+        _national_grad_cache = load_national_grad_status()
+    return _national_grad_cache
+
+
+def get_doctoral_enrollment() -> pd.DataFrame:
+    global _doctoral_enrollment_cache
+    if _doctoral_enrollment_cache is None:
+        _doctoral_enrollment_cache = load_doctoral_enrollment()
+    return _doctoral_enrollment_cache
+
+
+def get_counseling_special_10yr() -> dict[str, pd.DataFrame]:
+    global _counseling_cache
+    if _counseling_cache is None:
+        _counseling_cache = load_counseling_special_10yr()
+    return _counseling_cache
