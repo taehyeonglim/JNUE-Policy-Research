@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import unicodedata
 import zipfile
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -18,13 +19,31 @@ REQUIRED_ENTRIES = {
     "Preview/PrvText.txt",
 }
 SECTION_TAG = "{http://www.hancom.co.kr/hwpml/2011/section}sec"
+TEXT_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}t"
+LINE_BREAK_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}lineBreak"
 PARA_NS = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
+MAX_VISUAL_WIDTH = 110
 REQUIRED_TEXTS = [
     "전주교육대학교 교육전문대학원 설치 정책연구",
     "제I장 서론",
     "제IX장 결론",
     "부록 6. 원자료 추적표",
 ]
+
+
+def display_width(text: str) -> int:
+    return sum(2 if unicodedata.east_asian_width(ch) in {"F", "W"} else 1 for ch in text)
+
+
+def paragraph_lines(paragraph: ET.Element) -> list[str]:
+    lines = [""]
+    for text_node in paragraph.iter(TEXT_TAG):
+        if text_node.text:
+            lines[-1] += text_node.text
+        for child in list(text_node):
+            if child.tag == LINE_BREAK_TAG:
+                lines.append(child.tail or "")
+    return lines
 
 
 def validate(path: Path) -> list[str]:
@@ -61,16 +80,26 @@ def validate(path: Path) -> list[str]:
                 errors.append(f"unexpected section tag: {section.tag}")
 
             paragraphs = section.findall(".//hp:p", PARA_NS)
-            texts = [
-                "".join(t.text or "" for t in para.findall(".//hp:t", PARA_NS))
-                for para in paragraphs
-            ]
+            visual_lines: list[str] = []
+            texts: list[str] = []
+            for para in paragraphs:
+                lines = paragraph_lines(para)
+                visual_lines.extend(lines)
+                texts.append(" ".join(line for line in lines if line))
             body = "\n".join(texts)
             if len(paragraphs) < 100:
                 errors.append(f"too few paragraphs: {len(paragraphs)}")
             for required in REQUIRED_TEXTS:
                 if required not in body:
                     errors.append(f"missing required text: {required}")
+            too_wide = [
+                (idx + 1, display_width(line), line[:80])
+                for idx, line in enumerate(visual_lines)
+                if display_width(line) > MAX_VISUAL_WIDTH
+            ]
+            if too_wide:
+                sample = "; ".join(f"line {idx} width {width}: {text}" for idx, width, text in too_wide[:3])
+                errors.append(f"visual lines exceed width {MAX_VISUAL_WIDTH}: {sample}")
     except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, KeyError) as exc:
         errors.append(f"parse error: {exc}")
 

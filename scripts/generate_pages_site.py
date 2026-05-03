@@ -6,6 +6,7 @@ import html
 import hashlib
 import shutil
 import sys
+import unicodedata
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -572,7 +573,22 @@ def _validate_hwpx_file(path: Path) -> None:
         "Preview/PrvText.txt",
     }
     section_ns = "{http://www.hancom.co.kr/hwpml/2011/section}sec"
+    text_ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}t"
+    line_break_ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}lineBreak"
     para_ns = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
+
+    def display_width(text: str) -> int:
+        return sum(2 if unicodedata.east_asian_width(ch) in {"F", "W"} else 1 for ch in text)
+
+    def paragraph_lines(paragraph: ET.Element) -> list[str]:
+        lines = [""]
+        for text_node in paragraph.iter(text_ns):
+            if text_node.text:
+                lines[-1] += text_node.text
+            for child in list(text_node):
+                if child.tag == line_break_ns:
+                    lines.append(child.tail or "")
+        return lines
 
     try:
         with zipfile.ZipFile(path) as zf:
@@ -591,15 +607,19 @@ def _validate_hwpx_file(path: Path) -> None:
             if section.tag != section_ns:
                 raise ValueError(f"unexpected section namespace: {section.tag}")
 
-            texts = [
-                "".join(t.text or "" for t in para.findall(".//hp:t", para_ns))
-                for para in section.findall(".//hp:p", para_ns)
-            ]
+            texts = []
+            visual_lines = []
+            for para in section.findall(".//hp:p", para_ns):
+                lines = paragraph_lines(para)
+                visual_lines.extend(lines)
+                texts.append(" ".join(line for line in lines if line))
             body = "\n".join(texts)
             if len(texts) < 100 or "전주교육대학교 교육전문대학원 설치 정책연구" not in body:
                 raise ValueError("HWPX body text is incomplete")
             if "부록 6. 원자료 추적표" not in body:
                 raise ValueError("HWPX appendix text is incomplete")
+            if any(display_width(line) > 110 for line in visual_lines):
+                raise ValueError("HWPX visual line wrapping is incomplete")
     except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, ValueError) as exc:
         raise RuntimeError(f"Invalid HWPX report asset: {path}") from exc
 
