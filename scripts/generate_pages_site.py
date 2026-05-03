@@ -656,8 +656,8 @@ def _validate_hwpx_file(path: Path) -> None:
             for idx, para in enumerate(top_level):
                 if idx < 3 or paragraph_char_id(para) not in heading_char_ids or not paragraph_text(para):
                     continue
-                next_two = top_level[idx + 1 : idx + 3]
-                if len(next_two) < 2 or any(paragraph_text(candidate) for candidate in next_two):
+                previous_two = top_level[idx - 2 : idx]
+                if len(previous_two) < 2 or any(paragraph_text(candidate) for candidate in previous_two):
                     raise ValueError("HWPX heading spacing is incomplete")
     except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, ValueError) as exc:
         raise RuntimeError(f"Invalid HWPX report asset: {path}") from exc

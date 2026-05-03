@@ -566,10 +566,10 @@ def build_section_xml(all_blocks):
             continue
         wrap_width = HEADING_WRAP_WIDTH if level else BODY_WRAP_WIDTH
         lines = _wrap_text(text, wrap_width)
-        paragraph_index += _add_paragraph(sec, min(level, 4), lines, paragraph_index)
         if level:
             paragraph_index += _add_blank_paragraph(sec, paragraph_index)
             paragraph_index += _add_blank_paragraph(sec, paragraph_index)
+        paragraph_index += _add_paragraph(sec, min(level, 4), lines, paragraph_index)
 
     return _xml_with_decl(sec)
 

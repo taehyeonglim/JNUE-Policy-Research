@@ -148,9 +148,9 @@ def validate(path: Path) -> list[str]:
             for idx, para in enumerate(top_level_paragraphs):
                 if idx < 3 or paragraph_char_id(para) not in HEADING_CHAR_IDS or not paragraph_text(para):
                     continue
-                next_two = top_level_paragraphs[idx + 1 : idx + 3]
-                if len(next_two) < 2 or any(paragraph_text(candidate) for candidate in next_two):
-                    errors.append(f"heading paragraph {idx + 1} is not followed by two blank paragraphs")
+                previous_two = top_level_paragraphs[idx - 2 : idx]
+                if len(previous_two) < 2 or any(paragraph_text(candidate) for candidate in previous_two):
+                    errors.append(f"heading paragraph {idx + 1} is not preceded by two blank paragraphs")
                     break
     except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, KeyError) as exc:
         errors.append(f"parse error: {exc}")
