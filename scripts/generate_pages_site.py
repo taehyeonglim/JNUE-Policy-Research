@@ -5,8 +5,10 @@ from __future__ import annotations
 import html
 import shutil
 import sys
+import zipfile
 from datetime import datetime
 from pathlib import Path
+import xml.etree.ElementTree as ET
 
 import pandas as pd
 import plotly.express as px
@@ -551,9 +553,53 @@ def _decline_table(summary: pd.DataFrame) -> pd.DataFrame:
 def _copy_report_asset() -> str:
     ASSETS_DIR.mkdir(parents=True, exist_ok=True)
     if REPORT_PATH.exists():
+        _validate_hwpx_file(REPORT_PATH)
         shutil.copy2(REPORT_PATH, REPORT_ASSET)
         return f"assets/{REPORT_ASSET.name}"
     return ""
+
+
+def _validate_hwpx_file(path: Path) -> None:
+    """Fail fast if the downloadable HWPX is only a ZIP but not a usable HWPX."""
+    required = {
+        "mimetype",
+        "version.xml",
+        "Contents/content.hpf",
+        "Contents/header.xml",
+        "Contents/section0.xml",
+        "Preview/PrvText.txt",
+    }
+    section_ns = "{http://www.hancom.co.kr/hwpml/2011/section}sec"
+    para_ns = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
+
+    try:
+        with zipfile.ZipFile(path) as zf:
+            names = set(zf.namelist())
+            missing = required - names
+            if missing:
+                raise ValueError(f"missing HWPX entries: {', '.join(sorted(missing))}")
+
+            first = zf.infolist()[0]
+            if first.filename != "mimetype" or first.compress_type != zipfile.ZIP_STORED:
+                raise ValueError("mimetype must be the first uncompressed ZIP entry")
+            if zf.read("mimetype").decode("utf-8") != "application/hwp+zip":
+                raise ValueError("invalid HWPX mimetype")
+
+            section = ET.fromstring(zf.read("Contents/section0.xml"))
+            if section.tag != section_ns:
+                raise ValueError(f"unexpected section namespace: {section.tag}")
+
+            texts = [
+                "".join(t.text or "" for t in para.findall(".//hp:t", para_ns))
+                for para in section.findall(".//hp:p", para_ns)
+            ]
+            body = "\n".join(texts)
+            if len(texts) < 100 or "전주교육대학교 교육전문대학원 설치 정책연구" not in body:
+                raise ValueError("HWPX body text is incomplete")
+            if "부록 6. 원자료 추적표" not in body:
+                raise ValueError("HWPX appendix text is incomplete")
+    except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, ValueError) as exc:
+        raise RuntimeError(f"Invalid HWPX report asset: {path}") from exc
 
 
 def build_site() -> str:
