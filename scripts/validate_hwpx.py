@@ -21,8 +21,14 @@ REQUIRED_ENTRIES = {
 SECTION_TAG = "{http://www.hancom.co.kr/hwpml/2011/section}sec"
 TEXT_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}t"
 LINE_BREAK_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}lineBreak"
+RUN_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}run"
+TABLE_TAG = "{http://www.hancom.co.kr/hwpml/2011/paragraph}tbl"
+BOLD_TAG = "{http://www.hancom.co.kr/hwpml/2011/head}bold"
 PARA_NS = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
+HEAD_NS = {"hh": "http://www.hancom.co.kr/hwpml/2011/head", "hc": "http://www.hancom.co.kr/hwpml/2011/core"}
 MAX_VISUAL_WIDTH = 110
+HEADING_CHAR_IDS = {"7", "10", "11"}
+REQUIRED_TABLE_BORDER_IDS = {"3", "4"}
 REQUIRED_TEXTS = [
     "전주교육대학교 교육전문대학원 설치 정책연구",
     "제I장 서론",
@@ -37,13 +43,29 @@ def display_width(text: str) -> int:
 
 def paragraph_lines(paragraph: ET.Element) -> list[str]:
     lines = [""]
-    for text_node in paragraph.iter(TEXT_TAG):
+    for run in paragraph.findall(RUN_TAG):
+        if run.find(TABLE_TAG) is not None:
+            continue
+        for text_node in run.findall(TEXT_TAG):
+            _append_text_node_lines(lines, text_node)
+    return lines
+
+
+def _append_text_node_lines(lines: list[str], text_node: ET.Element) -> None:
         if text_node.text:
             lines[-1] += text_node.text
         for child in list(text_node):
             if child.tag == LINE_BREAK_TAG:
                 lines.append(child.tail or "")
-    return lines
+
+
+def paragraph_text(paragraph: ET.Element) -> str:
+    return " ".join(line for line in paragraph_lines(paragraph) if line).strip()
+
+
+def paragraph_char_id(paragraph: ET.Element) -> str:
+    run = paragraph.find(RUN_TAG)
+    return run.attrib.get("charPrIDRef", "") if run is not None else ""
 
 
 def validate(path: Path) -> list[str]:
@@ -75,11 +97,13 @@ def validate(path: Path) -> list[str]:
                     while fh.read(1024 * 1024):
                         pass
 
+            header = ET.fromstring(zf.read("Contents/header.xml"))
             section = ET.fromstring(zf.read("Contents/section0.xml"))
             if section.tag != SECTION_TAG:
                 errors.append(f"unexpected section tag: {section.tag}")
 
             paragraphs = section.findall(".//hp:p", PARA_NS)
+            top_level_paragraphs = section.findall("hp:p", PARA_NS)
             visual_lines: list[str] = []
             texts: list[str] = []
             for para in paragraphs:
@@ -89,6 +113,9 @@ def validate(path: Path) -> list[str]:
             body = "\n".join(texts)
             if len(paragraphs) < 100:
                 errors.append(f"too few paragraphs: {len(paragraphs)}")
+            tables = section.findall(".//hp:tbl", PARA_NS)
+            if not tables:
+                errors.append("missing HWPX table objects")
             for required in REQUIRED_TEXTS:
                 if required not in body:
                     errors.append(f"missing required text: {required}")
@@ -100,6 +127,31 @@ def validate(path: Path) -> list[str]:
             if too_wide:
                 sample = "; ".join(f"line {idx} width {width}: {text}" for idx, width, text in too_wide[:3])
                 errors.append(f"visual lines exceed width {MAX_VISUAL_WIDTH}: {sample}")
+
+            for char_id in HEADING_CHAR_IDS:
+                char_pr = header.find(f".//hh:charPr[@id='{char_id}']", HEAD_NS)
+                if char_pr is None or char_pr.find(BOLD_TAG) is None:
+                    errors.append(f"heading charPr {char_id} is not bold")
+
+            for border_id in REQUIRED_TABLE_BORDER_IDS:
+                border_fill = header.find(f".//hh:borderFill[@id='{border_id}']", HEAD_NS)
+                if border_fill is None:
+                    errors.append(f"missing table borderFill {border_id}")
+                    continue
+                for side in ("leftBorder", "rightBorder", "topBorder", "bottomBorder"):
+                    side_node = border_fill.find(f"hh:{side}", HEAD_NS)
+                    if side_node is None or side_node.attrib.get("type") != "SOLID":
+                        errors.append(f"table borderFill {border_id} has no solid {side}")
+                if border_id == "4" and border_fill.find("hc:fillBrush", HEAD_NS) is None:
+                    errors.append("table header borderFill 4 has no fillBrush")
+
+            for idx, para in enumerate(top_level_paragraphs):
+                if idx < 3 or paragraph_char_id(para) not in HEADING_CHAR_IDS or not paragraph_text(para):
+                    continue
+                next_two = top_level_paragraphs[idx + 1 : idx + 3]
+                if len(next_two) < 2 or any(paragraph_text(candidate) for candidate in next_two):
+                    errors.append(f"heading paragraph {idx + 1} is not followed by two blank paragraphs")
+                    break
     except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, KeyError) as exc:
         errors.append(f"parse error: {exc}")
 

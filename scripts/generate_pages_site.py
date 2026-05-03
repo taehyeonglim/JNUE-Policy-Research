@@ -575,20 +575,35 @@ def _validate_hwpx_file(path: Path) -> None:
     section_ns = "{http://www.hancom.co.kr/hwpml/2011/section}sec"
     text_ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}t"
     line_break_ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}lineBreak"
+    run_ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}run"
+    table_ns = "{http://www.hancom.co.kr/hwpml/2011/paragraph}tbl"
+    bold_ns = "{http://www.hancom.co.kr/hwpml/2011/head}bold"
     para_ns = {"hp": "http://www.hancom.co.kr/hwpml/2011/paragraph"}
+    head_ns = {"hh": "http://www.hancom.co.kr/hwpml/2011/head", "hc": "http://www.hancom.co.kr/hwpml/2011/core"}
+    heading_char_ids = {"7", "10", "11"}
 
     def display_width(text: str) -> int:
         return sum(2 if unicodedata.east_asian_width(ch) in {"F", "W"} else 1 for ch in text)
 
     def paragraph_lines(paragraph: ET.Element) -> list[str]:
         lines = [""]
-        for text_node in paragraph.iter(text_ns):
-            if text_node.text:
-                lines[-1] += text_node.text
-            for child in list(text_node):
-                if child.tag == line_break_ns:
-                    lines.append(child.tail or "")
+        for run in paragraph.findall(run_ns):
+            if run.find(table_ns) is not None:
+                continue
+            for text_node in run.findall(text_ns):
+                if text_node.text:
+                    lines[-1] += text_node.text
+                for child in list(text_node):
+                    if child.tag == line_break_ns:
+                        lines.append(child.tail or "")
         return lines
+
+    def paragraph_text(paragraph: ET.Element) -> str:
+        return " ".join(line for line in paragraph_lines(paragraph) if line).strip()
+
+    def paragraph_char_id(paragraph: ET.Element) -> str:
+        run = paragraph.find(run_ns)
+        return run.attrib.get("charPrIDRef", "") if run is not None else ""
 
     try:
         with zipfile.ZipFile(path) as zf:
@@ -603,6 +618,7 @@ def _validate_hwpx_file(path: Path) -> None:
             if zf.read("mimetype").decode("utf-8") != "application/hwp+zip":
                 raise ValueError("invalid HWPX mimetype")
 
+            header = ET.fromstring(zf.read("Contents/header.xml"))
             section = ET.fromstring(zf.read("Contents/section0.xml"))
             if section.tag != section_ns:
                 raise ValueError(f"unexpected section namespace: {section.tag}")
@@ -620,6 +636,29 @@ def _validate_hwpx_file(path: Path) -> None:
                 raise ValueError("HWPX appendix text is incomplete")
             if any(display_width(line) > 110 for line in visual_lines):
                 raise ValueError("HWPX visual line wrapping is incomplete")
+            if not section.findall(".//hp:tbl", para_ns):
+                raise ValueError("HWPX table objects are missing")
+            for char_id in heading_char_ids:
+                char_pr = header.find(f".//hh:charPr[@id='{char_id}']", head_ns)
+                if char_pr is None or char_pr.find(bold_ns) is None:
+                    raise ValueError("HWPX heading styles are incomplete")
+            for border_id in ("3", "4"):
+                border_fill = header.find(f".//hh:borderFill[@id='{border_id}']", head_ns)
+                if border_fill is None:
+                    raise ValueError("HWPX table border styles are incomplete")
+                for side in ("leftBorder", "rightBorder", "topBorder", "bottomBorder"):
+                    side_node = border_fill.find(f"hh:{side}", head_ns)
+                    if side_node is None or side_node.attrib.get("type") != "SOLID":
+                        raise ValueError("HWPX table border styles are incomplete")
+                if border_id == "4" and border_fill.find("hc:fillBrush", head_ns) is None:
+                    raise ValueError("HWPX table header style is incomplete")
+            top_level = section.findall("hp:p", para_ns)
+            for idx, para in enumerate(top_level):
+                if idx < 3 or paragraph_char_id(para) not in heading_char_ids or not paragraph_text(para):
+                    continue
+                next_two = top_level[idx + 1 : idx + 3]
+                if len(next_two) < 2 or any(paragraph_text(candidate) for candidate in next_two):
+                    raise ValueError("HWPX heading spacing is incomplete")
     except (zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError, ValueError) as exc:
         raise RuntimeError(f"Invalid HWPX report asset: {path}") from exc
 
