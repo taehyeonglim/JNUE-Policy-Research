@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import html
+import hashlib
 import shutil
 import sys
 import zipfile
@@ -555,7 +556,8 @@ def _copy_report_asset() -> str:
     if REPORT_PATH.exists():
         _validate_hwpx_file(REPORT_PATH)
         shutil.copy2(REPORT_PATH, REPORT_ASSET)
-        return f"assets/{REPORT_ASSET.name}"
+        digest = hashlib.sha256(REPORT_ASSET.read_bytes()).hexdigest()[:12]
+        return f"assets/{REPORT_ASSET.name}?v={digest}"
     return ""
 
 
@@ -632,7 +634,7 @@ def build_site() -> str:
         figs.append(_plot(competition))
 
     report_button = (
-        f'<a class="button" href="{_escape(report_href)}" download>최종보고서 HWPX 다운로드</a>'
+        f'<a class="button" href="{_escape(report_href)}" download="{_escape(REPORT_ASSET.name)}">최종보고서 HWPX 다운로드</a>'
         if report_href
         else '<span class="muted">HWPX 보고서 파일이 아직 생성되지 않았습니다.</span>'
     )
